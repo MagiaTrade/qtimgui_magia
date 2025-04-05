@@ -173,29 +173,65 @@ void ImGuiRenderer::renderDrawList(ImDrawData *draw_data)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, g_ElementsHandle);
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)cmd_list->IdxBuffer.Size * sizeof(ImDrawIdx), (const GLvoid*)cmd_list->IdxBuffer.Data, GL_STREAM_DRAW);
 
-        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+//        for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+//        {
+//            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+//            if (pcmd->UserCallback)
+//            {
+//                pcmd->UserCallback(cmd_list, pcmd);
+//            }
+//            else
+//            {
+//                // Project scissor/clipping rectangles into framebuffer space
+//                ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x, (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
+//                ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x, (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
+//                if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
+//                    continue;
+//
+//                // Apply scissor/clipping rectangle (Y is inverted in OpenGL)
+//                glScissor((int)clip_min.x, (int)(fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y));
+//
+//                 // Bind texture, Draw
+//                glBindTexture(GL_TEXTURE_2D, (GLuint)(size_t)pcmd->TextureId);
+//                glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, idx_buffer_offset + pcmd->IdxOffset);
+//            }
+//        }
+      for (int cmd_i = 0; cmd_i < cmd_list->CmdBuffer.Size; cmd_i++)
+      {
+        const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
+        if (pcmd->UserCallback)
         {
-            const ImDrawCmd* pcmd = &cmd_list->CmdBuffer[cmd_i];
-            if (pcmd->UserCallback)
-            {
-                pcmd->UserCallback(cmd_list, pcmd);
-            }
-            else
-            {
-                // Project scissor/clipping rectangles into framebuffer space
-                ImVec2 clip_min((pcmd->ClipRect.x - clip_off.x) * clip_scale.x, (pcmd->ClipRect.y - clip_off.y) * clip_scale.y);
-                ImVec2 clip_max((pcmd->ClipRect.z - clip_off.x) * clip_scale.x, (pcmd->ClipRect.w - clip_off.y) * clip_scale.y);
-                if (clip_max.x <= clip_min.x || clip_max.y <= clip_min.y)
-                    continue;
-
-                // Apply scissor/clipping rectangle (Y is inverted in OpenGL)
-                glScissor((int)clip_min.x, (int)(fb_height - clip_max.y), (int)(clip_max.x - clip_min.x), (int)(clip_max.y - clip_min.y));
-
-                 // Bind texture, Draw
-                glBindTexture(GL_TEXTURE_2D, (GLuint)(size_t)pcmd->TextureId);
-                glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, idx_buffer_offset + pcmd->IdxOffset);
-            }
+          pcmd->UserCallback(cmd_list, pcmd);
         }
+        else
+        {
+          // 'pcmd->ClipRect' JÁ ESTÁ em coordenadas do framebuffer por causa de 'draw_data->ScaleClipRects'
+          // Não precisa escalar manualmente de novo.
+
+          // Verificação de validade usando os valores já escalados:
+          if (pcmd->ClipRect.z <= pcmd->ClipRect.x || pcmd->ClipRect.w <= pcmd->ClipRect.y)
+            continue;
+
+          // Apply scissor/clipping rectangle (Y is inverted in OpenGL)
+          // Use os valores de pcmd->ClipRect diretamente.
+          // Note: ClipRect é (left, top, right, bottom) -> (x, y, z, w)
+          // glScissor é (x, y, width, height), onde y é do canto inferior esquerdo.
+          glScissor(
+              (int)pcmd->ClipRect.x,                                     // left
+              (int)(fb_height - pcmd->ClipRect.w),                       // bottom (fb_height - bottom_from_top)
+              (int)(pcmd->ClipRect.z - pcmd->ClipRect.x),                // width (right - left)
+              (int)(pcmd->ClipRect.w - pcmd->ClipRect.y)                 // height (bottom - top)
+          );
+
+          // Bind texture, Draw
+          glBindTexture(GL_TEXTURE_2D, (GLuint)(size_t)pcmd->TextureId);
+          glDrawElements(GL_TRIANGLES, (GLsizei)pcmd->ElemCount, sizeof(ImDrawIdx) == 2 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_INT, idx_buffer_offset + pcmd->IdxOffset);
+        }
+        // idx_buffer_offset += pcmd->ElemCount; // <-- Esta linha parece faltar no seu código original dentro do else, mas pode não ser necessária dependendo da versão do ImGui/OpenGL se você usa pcmd->IdxOffset
+      }
+      // Mova idx_buffer_offset para fora do if/else se ele for necessário para calcular o offset absoluto para glDrawElements.
+      // No entanto, o uso de (idx_buffer_offset + pcmd->IdxOffset) sugere que idx_buffer_offset deve ser 0 no início do loop de comandos,
+      // e o ponteiro passado para glDrawElements é o offset relativo dentro do buffer de índices atual. Portanto, a linha comentada acima provavelmente não é necessária.
     }
 
     // Restore modified GL state
